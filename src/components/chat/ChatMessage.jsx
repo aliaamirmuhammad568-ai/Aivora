@@ -2,7 +2,7 @@ import { useState } from 'react'
 import MarkdownContent from './MarkdownContent.jsx'
 import { useToast } from '../../context/ToastContext.jsx'
 
-export default function ChatMessage({ role, content, onRegenerate, isLast }) {
+export default function ChatMessage({ role, content, media, onRegenerate, isLast }) {
   const [copied, setCopied] = useState(false)
   const toast = useToast()
   const isUser = role === 'user'
@@ -21,6 +21,15 @@ export default function ChatMessage({ role, content, onRegenerate, isLast }) {
     return (
       <div className="flex justify-end">
         <div className="bg-hero-gradient text-white text-sm rounded-2xl rounded-tr-sm px-4 py-3 max-w-[85%] sm:max-w-md shadow-glow">
+          {media && (
+            <div className="mb-2">
+              {media.kind === 'image' ? (
+                <img src={media.dataUrl} alt={media.name} className="max-h-48 rounded-xl border border-white/20" />
+              ) : (
+                <video src={media.dataUrl} controls className="max-h-48 rounded-xl border border-white/20" />
+              )}
+            </div>
+          )}
           {content}
         </div>
       </div>

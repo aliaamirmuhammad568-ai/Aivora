@@ -6,7 +6,13 @@ export async function sendChatMessage(history) {
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
     body: JSON.stringify({
-      messages: history.map((m) => ({ role: m.role, content: m.content })),
+      messages: history.map((m) => ({
+        role: m.role,
+        content: m.content,
+        // Only send media inline data for the message that actually has it —
+        // keeps the payload light and avoids re-uploading old images/videos.
+        ...(m.media ? { media: { mimeType: m.media.mimeType, base64: m.media.base64 } } : {}),
+      })),
     }),
   })
 

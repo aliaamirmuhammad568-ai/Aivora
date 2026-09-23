@@ -39,12 +39,13 @@ export default function Chat() {
     }
   }
 
-  const handleSend = (text, attachment) => {
-    if (!text && !attachment) return
+  const handleSend = (text, media) => {
+    if (!text && !media) return
     const userMsg = {
       id: Date.now(),
       role: 'user',
-      content: attachment ? `${text || 'Sent a file'} 📎 ${attachment.name}` : text,
+      content: text || (media?.kind === 'image' ? 'Describe this image.' : 'Describe this video.'),
+      media,
     }
     const nextHistory = [...messages, userMsg]
     setMessages(nextHistory)
@@ -115,6 +116,7 @@ export default function Chat() {
               key={m.id}
               role={m.role}
               content={m.content}
+              media={m.media}
               isLast={m.role === 'assistant' && m.id === lastAssistantId}
               onRegenerate={handleRegenerate}
             />

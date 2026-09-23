@@ -19,7 +19,7 @@ const isProduction = process.env.NODE_ENV === 'production'
 app.set('trust proxy', 1) // needed for secure cookies behind Render's proxy
 
 app.use(cors({ origin: CLIENT_URL, credentials: true }))
-app.use(express.json({ limit: '2mb' }))
+app.use(express.json({ limit: '15mb' })) // headroom for base64-encoded image/video attachments
 
 app.use(
   session({
@@ -78,10 +78,16 @@ app.post('/api/chat', async (req, res) => {
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: m.content }],
     }))
-    const lastMessage = trimmed[trimmed.length - 1]?.content || ''
+    const last = trimmed[trimmed.length - 1]
+
+    // Build the current turn as multimodal parts if an image/video was attached.
+    const lastParts = [{ text: last?.content || '' }]
+    if (last?.media?.base64 && last?.media?.mimeType) {
+      lastParts.push({ inlineData: { mimeType: last.media.mimeType, data: last.media.base64 } })
+    }
 
     const chat = model.startChat({ history })
-    const result = await chat.sendMessage(lastMessage)
+    const result = await chat.sendMessage(lastParts)
     const text = result.response.text()
     const usage = result.response.usageMetadata || {}
 
