@@ -33,6 +33,17 @@ if (dbEnabled) {
     );
   `)
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_reset_tokens_user ON reset_tokens(user_id);`)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS usage_logs (
+      id SERIAL PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      prompt_tokens INTEGER NOT NULL DEFAULT 0,
+      completion_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `)
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_usage_logs_user ON usage_logs(user_id);`)
 } else {
   console.warn('⚠️  DATABASE_URL not set — auth features (signup/login/OAuth) will return an error until it is configured.')
 }

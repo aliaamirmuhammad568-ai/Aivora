@@ -7,6 +7,8 @@ import session from 'express-session'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import passport from './passport.js'
 import authRoutes from './authRoutes.js'
+import { logUsage, getUsageStats } from './usageStore.js'
+import { dbEnabled } from './userStore.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -52,6 +54,9 @@ app.post('/api/chat', async (req, res) => {
       error: 'GEMINI_API_KEY is not configured on the server. Add it to a .env file and restart the server.',
     })
   }
+  if (!req.isAuthenticated?.() || !req.user) {
+    return res.status(401).json({ error: 'You must be logged in to chat.' })
+  }
 
   const { messages } = req.body
   if (!Array.isArray(messages) || messages.length === 0) {
@@ -78,12 +83,32 @@ app.post('/api/chat', async (req, res) => {
     const chat = model.startChat({ history })
     const result = await chat.sendMessage(lastMessage)
     const text = result.response.text()
+    const usage = result.response.usageMetadata || {}
+
+    if (dbEnabled) {
+      await logUsage(req.user.id, {
+        promptTokens: usage.promptTokenCount || 0,
+        completionTokens: usage.candidatesTokenCount || 0,
+        totalTokens: usage.totalTokenCount || 0,
+      })
+    }
 
     res.json({ content: text })
   } catch (err) {
     console.error('Gemini API error:', err.message)
     res.status(500).json({ error: 'The AI request failed. Please try again.' })
   }
+})
+
+app.get('/api/usage', async (req, res) => {
+  if (!req.isAuthenticated?.() || !req.user) {
+    return res.status(401).json({ error: 'You must be logged in.' })
+  }
+  if (!dbEnabled) {
+    return res.status(503).json({ error: 'The database is not configured on the server yet.' })
+  }
+  const stats = await getUsageStats(req.user.id)
+  res.json(stats)
 })
 
 // Serve the built frontend (dist/) from this same server, so one deployed

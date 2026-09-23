@@ -4,6 +4,7 @@ export async function sendChatMessage(history) {
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     body: JSON.stringify({
       messages: history.map((m) => ({ role: m.role, content: m.content })),
     }),

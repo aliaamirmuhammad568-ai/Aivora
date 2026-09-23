@@ -1,9 +1,12 @@
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
 import Badge from '../../components/ui/Badge.jsx'
-import { conversations, files, usageMonthly, usageStats, recentActivity } from '../../data/dashboard.js'
+import LoadingSpinner from '../../components/ui/LoadingSpinner.jsx'
+import { conversations, files, recentActivity } from '../../data/dashboard.js'
 import { useAuth } from '../../context/AuthContext.jsx'
+import { fetchUsage } from '../../data/usageClient.js'
 
 const quickActions = [
   { icon: '💬', label: 'New chat', to: '/dashboard/chat' },
@@ -12,11 +15,21 @@ const quickActions = [
   { icon: '⚙️', label: 'Settings', to: '/dashboard/settings' },
 ]
 
-const maxUsage = Math.max(...usageMonthly.map((u) => u.value))
-
 export default function DashboardHome() {
   const { user } = useAuth()
   const firstName = user?.name?.split(' ')[0] || 'there'
+
+  const [usage, setUsage] = useState(null)
+  const [usageLoading, setUsageLoading] = useState(true)
+
+  useEffect(() => {
+    fetchUsage()
+      .then(setUsage)
+      .catch(() => setUsage(null))
+      .finally(() => setUsageLoading(false))
+  }, [])
+
+  const maxUsage = Math.max(1, ...(usage?.monthly.map((u) => u.value) || [1]))
 
   return (
     <div className="space-y-8 pb-8">
@@ -35,54 +48,60 @@ export default function DashboardHome() {
         ))}
       </div>
 
-      {/* Stats */}
-      <div className="grid sm:grid-cols-3 gap-5">
-        <Card>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Messages this month</p>
-          <p className="text-3xl font-display font-bold text-slate-900 dark:text-white mt-1">{usageStats.messagesUsed.toLocaleString()}</p>
-          <Badge tone="green" className="mt-3">Unlimited plan</Badge>
-        </Card>
-        <Card>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Tokens used</p>
-          <p className="text-3xl font-display font-bold text-slate-900 dark:text-white mt-1">
-            {usageStats.tokensUsed.toLocaleString()}
-            <span className="text-base text-slate-400 font-normal"> / {usageStats.tokensLimit.toLocaleString()}</span>
-          </p>
-          <div className="w-full h-2 bg-slate-200 dark:bg-white/10 rounded-full mt-3 overflow-hidden">
-            <div
-              className="h-full bg-hero-gradient rounded-full"
-              style={{ width: `${(usageStats.tokensUsed / usageStats.tokensLimit) * 100}%` }}
-            />
-          </div>
-        </Card>
-        <Card>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Files analyzed</p>
-          <p className="text-3xl font-display font-bold text-slate-900 dark:text-white mt-1">{usageStats.filesAnalyzed}</p>
-          <Badge tone="brand" className="mt-3">{usageStats.daysRemaining} days left in cycle</Badge>
-        </Card>
-      </div>
+      {/* Stats — real, pulled live from your chat usage */}
+      {usageLoading ? (
+        <div className="flex justify-center py-10">
+          <LoadingSpinner size={24} />
+        </div>
+      ) : (
+        <div className="grid sm:grid-cols-2 gap-5">
+          <Card>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Messages sent (all time)</p>
+            <p className="text-3xl font-display font-bold text-slate-900 dark:text-white mt-1">
+              {(usage?.messagesUsed ?? 0).toLocaleString()}
+            </p>
+            <Badge tone="green" className="mt-3">Free plan · Unlimited</Badge>
+          </Card>
+          <Card>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Tokens used (all time)</p>
+            <p className="text-3xl font-display font-bold text-slate-900 dark:text-white mt-1">
+              {(usage?.tokensUsed ?? 0).toLocaleString()}
+            </p>
+          </Card>
+        </div>
+      )}
 
       <div className="grid lg:grid-cols-5 gap-6">
-        {/* Usage chart */}
+        {/* Usage chart — real */}
         <Card className="lg:col-span-3">
           <div className="flex items-center justify-between mb-6">
-            <h3 className="font-display font-semibold text-slate-900 dark:text-white">AI usage this year</h3>
+            <h3 className="font-display font-semibold text-slate-900 dark:text-white">Messages per month</h3>
             <Link to="/dashboard/usage" className="text-xs text-brand-500 hover:text-brand-600 font-medium">
               View details
             </Link>
           </div>
-          <div className="flex items-end justify-between gap-3 h-40">
-            {usageMonthly.map((m) => (
-              <div key={m.month} className="flex-1 flex flex-col items-center gap-2">
-                <div
-                  className="w-full rounded-t-lg bg-hero-gradient transition-all"
-                  style={{ height: `${(m.value / maxUsage) * 100}%` }}
-                  title={`${m.value} messages`}
-                />
-                <span className="text-xs text-slate-400">{m.month}</span>
-              </div>
-            ))}
-          </div>
+          {usageLoading ? (
+            <div className="flex justify-center h-40 items-center">
+              <LoadingSpinner size={24} />
+            </div>
+          ) : !usage?.monthly.length ? (
+            <p className="text-sm text-slate-500 dark:text-slate-400 py-8 text-center">
+              No chat activity yet — send a message in AI Chat to see it here.
+            </p>
+          ) : (
+            <div className="flex items-end justify-between gap-3 h-40">
+              {usage.monthly.map((m) => (
+                <div key={m.month} className="flex-1 flex flex-col items-center gap-2">
+                  <div
+                    className="w-full rounded-t-lg bg-hero-gradient transition-all"
+                    style={{ height: `${(m.value / maxUsage) * 100}%`, minHeight: m.value > 0 ? '4px' : 0 }}
+                    title={`${m.value} messages`}
+                  />
+                  <span className="text-xs text-slate-400">{m.month}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </Card>
 
         {/* Recent activity */}
@@ -156,7 +175,7 @@ export default function DashboardHome() {
 
       <Card className="flex flex-col sm:flex-row items-center justify-between gap-4">
         <div>
-          <h3 className="font-display font-semibold text-slate-900 dark:text-white">On the Pro plan</h3>
+          <h3 className="font-display font-semibold text-slate-900 dark:text-white">On the Free plan</h3>
           <p className="text-sm text-slate-500 dark:text-slate-400">Unlock team collaboration and admin controls with Business.</p>
         </div>
         <Button to="/pricing" variant="secondary">
