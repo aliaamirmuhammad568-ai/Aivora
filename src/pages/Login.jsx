@@ -6,13 +6,15 @@ import Button from '../components/ui/Button.jsx'
 import SocialLoginButtons from '../components/ui/SocialLoginButtons.jsx'
 import { useToast } from '../context/ToastContext.jsx'
 import { useAuth } from '../context/AuthContext.jsx'
-import { login } from '../data/authClient.js'
+import { login, verifyTwoFactorLogin } from '../data/authClient.js'
 
 export default function Login() {
   const [form, setForm] = useState({ email: '', password: '' })
   const [errors, setErrors] = useState({})
   const [remember, setRemember] = useState(true)
   const [loading, setLoading] = useState(false)
+  const [tempToken, setTempToken] = useState(null)
+  const [code, setCode] = useState('')
   const navigate = useNavigate()
   const location = useLocation()
   const toast = useToast()
@@ -35,7 +37,27 @@ export default function Login() {
     if (!validate()) return
     setLoading(true)
     try {
-      await login({ email: form.email, password: form.password, remember })
+      const result = await login({ email: form.email, password: form.password, remember })
+      if (result.requiresTwoFactor) {
+        setTempToken(result.tempToken)
+      } else {
+        await refresh()
+        toast.success('Welcome back!')
+        navigate(redirectTo)
+      }
+    } catch (err) {
+      setErrors({ form: err.message })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleVerify = async (e) => {
+    e.preventDefault()
+    if (!code.trim()) return setErrors({ form: 'Enter the 6-digit code from your authenticator app.' })
+    setLoading(true)
+    try {
+      await verifyTwoFactorLogin({ tempToken, code: code.trim() })
       await refresh()
       toast.success('Welcome back!')
       navigate(redirectTo)
@@ -44,6 +66,43 @@ export default function Login() {
     } finally {
       setLoading(false)
     }
+  }
+
+  if (tempToken) {
+    return (
+      <AuthLayout title="Two-factor verification" subtitle="Enter the 6-digit code from your authenticator app">
+        <form onSubmit={handleVerify} noValidate className="space-y-5">
+          {errors.form && (
+            <div className="px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-sm text-red-400">
+              {errors.form}
+            </div>
+          )}
+          <Input
+            label="Verification code"
+            placeholder="123456"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            inputMode="numeric"
+            maxLength={6}
+            autoFocus
+          />
+          <Button type="submit" size="lg" className="w-full" loading={loading}>
+            {loading ? 'Verifying...' : 'Verify & continue'}
+          </Button>
+          <button
+            type="button"
+            onClick={() => {
+              setTempToken(null)
+              setCode('')
+              setErrors({})
+            }}
+            className="w-full text-center text-sm text-slate-500 dark:text-slate-400 hover:text-brand-500"
+          >
+            Back to log in
+          </button>
+        </form>
+      </AuthLayout>
+    )
   }
 
   return (

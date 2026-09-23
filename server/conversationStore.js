@@ -41,7 +41,7 @@ export async function getConversationOwner(conversationId) {
 
 export async function getMessages(conversationId) {
   const { rows } = await pool.query(
-    `SELECT id, role, content, media_mime_type, media_data, created_at
+    `SELECT id, role, content, media_mime_type, media_data, media_name, created_at
      FROM messages WHERE conversation_id = $1 ORDER BY id ASC`,
     [conversationId],
   )
@@ -49,16 +49,16 @@ export async function getMessages(conversationId) {
     id: r.id,
     role: r.role,
     content: r.content,
-    media: r.media_mime_type ? { mimeType: r.media_mime_type, base64: r.media_data } : null,
+    media: r.media_mime_type ? { mimeType: r.media_mime_type, base64: r.media_data, name: r.media_name } : null,
     createdAt: r.created_at,
   }))
 }
 
 export async function addMessage(conversationId, { role, content, media }) {
   const { rows } = await pool.query(
-    `INSERT INTO messages (conversation_id, role, content, media_mime_type, media_data)
-     VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
-    [conversationId, role, content, media?.mimeType || null, media?.base64 || null],
+    `INSERT INTO messages (conversation_id, role, content, media_mime_type, media_data, media_name)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`,
+    [conversationId, role, content, media?.mimeType || null, media?.base64 || null, media?.name || null],
   )
   await pool.query('UPDATE conversations SET updated_at = now() WHERE id = $1', [conversationId])
   return rows[0]

@@ -14,6 +14,8 @@ import {
 } from './conversationStore.js'
 import { listFiles, createFile, getFileOwner, deleteFile } from './fileStore.js'
 import { logActivity, listActivity } from './activityStore.js'
+import { needsTextExtraction, supportsNativeInline, extractText } from './documentParser.js'
+import { getPreferences, setPreferences } from './notificationsStore.js'
 
 const router = Router()
 
@@ -32,20 +34,47 @@ router.get('/health', (req, res) => {
 
 // --- Chat (persisted) ---
 
+const MAX_EXTRACTED_CHARS = 12000
+
+// Builds Gemini "parts" for one turn. Images/video/PDF go through natively
+// as inline data. DOCX and plain-text files have no native Gemini support,
+// so their text is extracted and folded into the prompt instead.
+async function buildParts(text, media) {
+  const parts = [{ text: text || '' }]
+  if (!media?.base64 || !media?.mimeType) return parts
+
+  if (supportsNativeInline(media.mimeType)) {
+    parts.push({ inlineData: { mimeType: media.mimeType, data: media.base64 } })
+  } else if (needsTextExtraction(media.mimeType)) {
+    let extracted = null
+    try {
+      extracted = await extractText(media.mimeType, media.base64)
+    } catch (err) {
+      console.error('Document extraction error:', err.message)
+    }
+    const truncated =
+      extracted && extracted.length > MAX_EXTRACTED_CHARS
+        ? `${extracted.slice(0, MAX_EXTRACTED_CHARS)}\n...[truncated]`
+        : extracted
+    parts[0].text = `${parts[0].text}\n\n[Content of attached document "${media.name || 'document'}"]:\n${
+      truncated || '(no extractable text found in this document)'
+    }`
+  }
+  return parts
+}
+
 async function runGemini(history, lastText, media) {
   const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash', systemInstruction: SYSTEM_PROMPT })
-  const geminiHistory = history.map((m) => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: m.media?.base64
-      ? [{ text: m.content }, { inlineData: { mimeType: m.media.mimeType, data: m.media.base64 } }]
-      : [{ text: m.content }],
-  }))
 
-  const lastParts = [{ text: lastText || '' }]
-  if (media?.base64 && media?.mimeType) {
-    lastParts.push({ inlineData: { mimeType: media.mimeType, data: media.base64 } })
+  const geminiHistory = []
+  for (const m of history) {
+    geminiHistory.push({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: await buildParts(m.content, m.media),
+    })
   }
 
+  const lastParts = await buildParts(lastText, media)
   const chat = model.startChat({ history: geminiHistory })
   const result = await chat.sendMessage(lastParts)
   return { text: result.response.text(), usage: result.response.usageMetadata || {} }
@@ -73,7 +102,8 @@ router.post('/chat', requireAuth, requireDb, async (req, res) => {
         return res.status(404).json({ error: 'Conversation not found.' })
       }
     } else {
-      const convo = await createConversation(req.user.id, message)
+      const titleSource = message?.trim() || (media?.name ? `Analyze ${media.name}` : 'New conversation')
+      const convo = await createConversation(req.user.id, titleSource)
       convoId = convo.id
       isNewConversation = true
     }
@@ -203,6 +233,17 @@ router.get('/activity', requireAuth, requireDb, async (req, res) => {
 
 router.get('/usage', requireAuth, requireDb, async (req, res) => {
   res.json(await getUsageStats(req.user.id))
+})
+
+// --- Notification preferences ---
+
+router.get('/settings/notifications', requireAuth, requireDb, async (req, res) => {
+  res.json(await getPreferences(req.user.id))
+})
+
+router.put('/settings/notifications', requireAuth, requireDb, async (req, res) => {
+  const { product, security, marketing, weekly } = req.body || {}
+  res.json(await setPreferences(req.user.id, { product, security, marketing, weekly }))
 })
 
 export default router

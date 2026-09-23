@@ -15,6 +15,8 @@ function rowToUser(row) {
     passwordHash: row.password_hash,
     avatar: row.avatar,
     createdAt: row.created_at,
+    twoFactorSecret: row.two_factor_secret,
+    twoFactorEnabled: row.two_factor_enabled,
   }
 }
 
@@ -66,8 +68,22 @@ export async function updatePassword(id, passwordHash) {
 
 export function toPublicUser(user) {
   if (!user) return null
-  const { passwordHash, ...publicFields } = user
+  const { passwordHash, twoFactorSecret, ...publicFields } = user
   return publicFields
+}
+
+// --- Two-factor auth ---
+
+export async function setPendingTwoFactorSecret(id, secret) {
+  await pool.query('UPDATE users SET two_factor_secret = $1 WHERE id = $2', [secret, id])
+}
+
+export async function enableTwoFactor(id) {
+  await pool.query('UPDATE users SET two_factor_enabled = true WHERE id = $1', [id])
+}
+
+export async function disableTwoFactor(id) {
+  await pool.query('UPDATE users SET two_factor_enabled = false, two_factor_secret = NULL WHERE id = $1', [id])
 }
 
 // --- Password reset tokens ---

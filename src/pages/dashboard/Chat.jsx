@@ -42,7 +42,7 @@ export default function Chat() {
             ? {
                 ...m.media,
                 dataUrl: `data:${m.media.mimeType};base64,${m.media.base64}`,
-                kind: m.media.mimeType.startsWith('video/') ? 'video' : 'image',
+                kind: m.media.mimeType.startsWith('image/') ? 'image' : m.media.mimeType.startsWith('video/') ? 'video' : 'document',
               }
             : null,
         })),
@@ -62,13 +62,21 @@ export default function Chat() {
     setSidebarOpen(false)
   }
 
+  const defaultMessageFor = (media) => {
+    if (media?.kind === 'image') return 'Describe this image.'
+    if (media?.kind === 'video') return 'Describe this video.'
+    if (media?.kind === 'document') return 'Summarize this document.'
+    return ''
+  }
+
   const handleSend = async (text, media) => {
     if (!text && !media) return
-    const userMsg = { id: `local-${Date.now()}`, role: 'user', content: text, media }
+    const finalText = text || defaultMessageFor(media)
+    const userMsg = { id: `local-${Date.now()}`, role: 'user', content: finalText, media }
     setMessages((m) => [...m, userMsg])
     setTyping(true)
     try {
-      const { conversationId, content } = await sendChatMessage({ conversationId: activeId, message: text, media })
+      const { conversationId, content } = await sendChatMessage({ conversationId: activeId, message: finalText, media })
       setMessages((m) => [...m, { id: `local-${Date.now()}-r`, role: 'assistant', content }])
       if (!activeId) {
         setActiveId(conversationId)

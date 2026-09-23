@@ -25,6 +25,8 @@ if (dbEnabled) {
     );
   `)
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower ON users (lower(email)) WHERE email IS NOT NULL;`)
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT;`)
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN NOT NULL DEFAULT false;`)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS reset_tokens (
       token TEXT PRIMARY KEY,
@@ -68,6 +70,7 @@ if (dbEnabled) {
     );
   `)
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);`)
+  await pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_name TEXT;`)
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS files (
@@ -92,6 +95,25 @@ if (dbEnabled) {
     );
   `)
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_activity_user ON activity_log(user_id);`)
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS notification_preferences (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      product BOOLEAN NOT NULL DEFAULT true,
+      security BOOLEAN NOT NULL DEFAULT true,
+      marketing BOOLEAN NOT NULL DEFAULT false,
+      weekly BOOLEAN NOT NULL DEFAULT true
+    );
+  `)
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS two_factor_pending (
+      token TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      remember BOOLEAN NOT NULL DEFAULT false,
+      expires_at BIGINT NOT NULL
+    );
+  `)
 } else {
   console.warn('⚠️  DATABASE_URL not set — auth features (signup/login/OAuth) will return an error until it is configured.')
 }

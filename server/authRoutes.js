@@ -1,15 +1,22 @@
 import { Router } from 'express'
 import bcrypt from 'bcryptjs'
+import { authenticator } from 'otplib'
+import QRCode from 'qrcode'
 import passport, { googleEnabled, githubEnabled } from './passport.js'
 import {
   dbEnabled,
   findByEmail,
+  findById,
   createLocalUser,
   toPublicUser,
   createResetToken,
   consumeResetToken,
   updatePassword,
+  setPendingTwoFactorSecret,
+  enableTwoFactor,
+  disableTwoFactor,
 } from './userStore.js'
+import { createPendingLogin, getPendingLogin, deletePendingLogin } from './twoFactorStore.js'
 import { emailEnabled, sendPasswordResetEmail } from './email.js'
 
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173'
@@ -21,6 +28,21 @@ function requireDb(req, res, next) {
     return res.status(503).json({ error: 'The database is not configured on the server yet.' })
   }
   next()
+}
+
+function requireAuth(req, res, next) {
+  if (!req.isAuthenticated?.() || !req.user) {
+    return res.status(401).json({ error: 'You must be logged in.' })
+  }
+  next()
+}
+
+function applyRememberMe(req, remember) {
+  if (remember) {
+    req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000
+  } else {
+    req.session.cookie.expires = false
+  }
 }
 
 router.get('/providers', (req, res) => {
@@ -85,17 +107,44 @@ router.post('/login', requireDb, async (req, res) => {
     return res.status(401).json({ error: 'Incorrect email or password.' })
   }
 
+  if (user.twoFactorEnabled) {
+    const tempToken = await createPendingLogin(user.id, remember)
+    return res.json({ requiresTwoFactor: true, tempToken })
+  }
+
   req.login(user, (err) => {
     if (err) return res.status(500).json({ error: 'Sign-in failed. Please try again.' })
+    applyRememberMe(req, remember)
+    res.json({ user: toPublicUser(user) })
+  })
+})
 
-    if (remember) {
-      // "Remember me": keep the session for 30 days.
-      req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000
-    } else {
-      // Unchecked: session cookie, expires when the browser is closed.
-      req.session.cookie.expires = false
-    }
+router.post('/2fa/login-verify', requireDb, async (req, res) => {
+  const { tempToken, code } = req.body || {}
+  if (!tempToken || !code) {
+    return res.status(400).json({ error: 'A verification code is required.' })
+  }
 
+  const pending = await getPendingLogin(tempToken)
+  if (!pending) {
+    return res.status(400).json({ error: 'This login attempt has expired. Please log in again.' })
+  }
+
+  const user = await findById(pending.userId)
+  if (!user?.twoFactorSecret) {
+    return res.status(400).json({ error: 'Two-factor authentication is not set up for this account.' })
+  }
+
+  const valid = authenticator.verify({ token: code.trim(), secret: user.twoFactorSecret })
+  if (!valid) {
+    return res.status(401).json({ error: 'Invalid code. Please try again.' })
+  }
+
+  await deletePendingLogin(tempToken)
+
+  req.login(user, (err) => {
+    if (err) return res.status(500).json({ error: 'Sign-in failed. Please try again.' })
+    applyRememberMe(req, pending.remember)
     res.json({ user: toPublicUser(user) })
   })
 })
@@ -152,6 +201,73 @@ router.post('/reset-password', requireDb, async (req, res) => {
 
   const passwordHash = await bcrypt.hash(password, 10)
   await updatePassword(user.id, passwordHash)
+  res.json({ ok: true })
+})
+
+// --- Account security (requires an active session) ---
+
+router.post('/change-password', requireDb, requireAuth, async (req, res) => {
+  const { currentPassword, newPassword } = req.body || {}
+  const user = req.user
+
+  if (user.provider !== 'local') {
+    return res.status(400).json({ error: `Your account uses ${user.provider} sign-in and has no password to change.` })
+  }
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Current and new password are required.' })
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters.' })
+  }
+
+  const valid = await bcrypt.compare(currentPassword, user.passwordHash)
+  if (!valid) {
+    return res.status(401).json({ error: 'Current password is incorrect.' })
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, 10)
+  await updatePassword(user.id, passwordHash)
+  res.json({ ok: true })
+})
+
+router.post('/2fa/setup', requireDb, requireAuth, async (req, res) => {
+  const secret = authenticator.generateSecret()
+  await setPendingTwoFactorSecret(req.user.id, secret)
+
+  const label = req.user.email || req.user.name || req.user.id
+  const otpauth = authenticator.keyuri(label, 'Aivora', secret)
+  const qrCode = await QRCode.toDataURL(otpauth)
+
+  res.json({ secret, qrCode })
+})
+
+router.post('/2fa/confirm', requireDb, requireAuth, async (req, res) => {
+  const { code } = req.body || {}
+  const user = await findById(req.user.id) // fresh copy, has the just-set pending secret
+  if (!user?.twoFactorSecret) {
+    return res.status(400).json({ error: 'Start setup first by requesting a QR code.' })
+  }
+  if (!code || !authenticator.verify({ token: code.trim(), secret: user.twoFactorSecret })) {
+    return res.status(400).json({ error: 'Invalid code. Check your authenticator app and try again.' })
+  }
+
+  await enableTwoFactor(user.id)
+  res.json({ ok: true })
+})
+
+router.post('/2fa/disable', requireDb, requireAuth, async (req, res) => {
+  const { password, code } = req.body || {}
+  const user = await findById(req.user.id)
+
+  if (user.provider === 'local') {
+    if (!password || !(await bcrypt.compare(password, user.passwordHash))) {
+      return res.status(401).json({ error: 'Incorrect password.' })
+    }
+  } else if (!code || !authenticator.verify({ token: code.trim(), secret: user.twoFactorSecret })) {
+    return res.status(401).json({ error: 'Invalid verification code.' })
+  }
+
+  await disableTwoFactor(user.id)
   res.json({ ok: true })
 })
 

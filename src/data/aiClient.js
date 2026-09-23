@@ -19,7 +19,7 @@ export function sendChatMessage({ conversationId, message, media }) {
   return postChat('/chat', {
     conversationId,
     message,
-    media: media ? { mimeType: media.mimeType, base64: media.base64 } : undefined,
+    media: media ? { mimeType: media.mimeType, base64: media.base64, name: media.name } : undefined,
   })
 }
 

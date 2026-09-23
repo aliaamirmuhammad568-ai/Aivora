@@ -23,10 +23,17 @@ export default function ChatMessage({ role, content, media, onRegenerate, isLast
         <div className="bg-hero-gradient text-white text-sm rounded-2xl rounded-tr-sm px-4 py-3 max-w-[85%] sm:max-w-md shadow-glow">
           {media && (
             <div className="mb-2">
-              {media.kind === 'image' ? (
+              {media.kind === 'image' && (
                 <img src={media.dataUrl} alt={media.name} className="max-h-48 rounded-xl border border-white/20" />
-              ) : (
+              )}
+              {media.kind === 'video' && (
                 <video src={media.dataUrl} controls className="max-h-48 rounded-xl border border-white/20" />
+              )}
+              {media.kind === 'document' && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-white/20 bg-white/10">
+                  <span className="text-lg">📄</span>
+                  <span className="text-xs truncate">{media.name}</span>
+                </div>
               )}
             </div>
           )}
