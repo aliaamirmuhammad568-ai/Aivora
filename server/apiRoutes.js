@@ -1,5 +1,4 @@
 import { Router } from 'express'
-import { GoogleGenerativeAI } from '@google/generative-ai'
 import { requireAuth, requireDb } from './middleware.js'
 import { logUsage, getUsageStats } from './usageStore.js'
 import {
@@ -14,76 +13,23 @@ import {
 } from './conversationStore.js'
 import { listFiles, createFile, getFileOwner, deleteFile } from './fileStore.js'
 import { logActivity, listActivity } from './activityStore.js'
-import { needsTextExtraction, supportsNativeInline, extractText } from './documentParser.js'
 import { getPreferences, setPreferences } from './notificationsStore.js'
+import { runAI, aiConfigured } from './aiProvider.js'
 
 const router = Router()
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024 // 8MB, matches the chat attachment cap
 
-const apiKey = process.env.GEMINI_API_KEY
-const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null
-
-const SYSTEM_PROMPT =
-  'You are Aivora, a helpful, concise AI assistant embedded in the Aivora SaaS platform. ' +
-  'Format responses with markdown (headings, bold, lists, code fences) when useful.'
-
 router.get('/health', (req, res) => {
-  res.json({ ok: true, configured: Boolean(apiKey) })
+  res.json({ ok: true, configured: aiConfigured })
 })
 
 // --- Chat (persisted) ---
 
-const MAX_EXTRACTED_CHARS = 12000
-
-// Builds Gemini "parts" for one turn. Images/video/PDF go through natively
-// as inline data. DOCX and plain-text files have no native Gemini support,
-// so their text is extracted and folded into the prompt instead.
-async function buildParts(text, media) {
-  const parts = [{ text: text || '' }]
-  if (!media?.base64 || !media?.mimeType) return parts
-
-  if (supportsNativeInline(media.mimeType)) {
-    parts.push({ inlineData: { mimeType: media.mimeType, data: media.base64 } })
-  } else if (needsTextExtraction(media.mimeType)) {
-    let extracted = null
-    try {
-      extracted = await extractText(media.mimeType, media.base64)
-    } catch (err) {
-      console.error('Document extraction error:', err.message)
-    }
-    const truncated =
-      extracted && extracted.length > MAX_EXTRACTED_CHARS
-        ? `${extracted.slice(0, MAX_EXTRACTED_CHARS)}\n...[truncated]`
-        : extracted
-    parts[0].text = `${parts[0].text}\n\n[Content of attached document "${media.name || 'document'}"]:\n${
-      truncated || '(no extractable text found in this document)'
-    }`
-  }
-  return parts
-}
-
-async function runGemini(history, lastText, media) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash', systemInstruction: SYSTEM_PROMPT })
-
-  const geminiHistory = []
-  for (const m of history) {
-    geminiHistory.push({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: await buildParts(m.content, m.media),
-    })
-  }
-
-  const lastParts = await buildParts(lastText, media)
-  const chat = model.startChat({ history: geminiHistory })
-  const result = await chat.sendMessage(lastParts)
-  return { text: result.response.text(), usage: result.response.usageMetadata || {} }
-}
-
 router.post('/chat', requireAuth, requireDb, async (req, res) => {
-  if (!genAI) {
+  if (!aiConfigured) {
     return res.status(503).json({
-      error: 'GEMINI_API_KEY is not configured on the server. Add it to a .env file and restart the server.',
+      error: 'No AI provider is configured on the server. Add GROQ_API_KEY or GEMINI_API_KEY to .env and restart.',
     })
   }
 
@@ -110,16 +56,12 @@ router.post('/chat', requireAuth, requireDb, async (req, res) => {
 
     const history = isNewConversation ? [] : await getMessages(convoId)
 
-    const { text, usage } = await runGemini(history, message, media)
+    const { text, usage } = await runAI(history, message, media)
 
     await addMessage(convoId, { role: 'user', content: message || '', media })
     await addMessage(convoId, { role: 'assistant', content: text })
 
-    await logUsage(req.user.id, {
-      promptTokens: usage.promptTokenCount || 0,
-      completionTokens: usage.candidatesTokenCount || 0,
-      totalTokens: usage.totalTokenCount || 0,
-    })
+    await logUsage(req.user.id, usage)
 
     if (isNewConversation) {
       await logActivity(req.user.id, 'chat', `New conversation: "${(message || 'Untitled').slice(0, 60)}"`)
@@ -127,14 +69,14 @@ router.post('/chat', requireAuth, requireDb, async (req, res) => {
 
     res.json({ conversationId: convoId, content: text })
   } catch (err) {
-    console.error('Gemini API error:', err.message)
+    console.error('AI request error:', err.message)
     res.status(500).json({ error: 'The AI request failed. Please try again.' })
   }
 })
 
 router.post('/chat/regenerate', requireAuth, requireDb, async (req, res) => {
-  if (!genAI) {
-    return res.status(503).json({ error: 'GEMINI_API_KEY is not configured on the server.' })
+  if (!aiConfigured) {
+    return res.status(503).json({ error: 'No AI provider is configured on the server.' })
   }
   const { conversationId } = req.body
   if (!conversationId) return res.status(400).json({ error: 'conversationId is required' })
@@ -152,17 +94,13 @@ router.post('/chat/regenerate', requireAuth, requireDb, async (req, res) => {
 
     await deleteLastAssistantMessage(conversationId)
 
-    const { text, usage } = await runGemini(history, lastUser.content, lastUser.media)
+    const { text, usage } = await runAI(history, lastUser.content, lastUser.media)
     await addMessage(conversationId, { role: 'assistant', content: text })
-    await logUsage(req.user.id, {
-      promptTokens: usage.promptTokenCount || 0,
-      completionTokens: usage.candidatesTokenCount || 0,
-      totalTokens: usage.totalTokenCount || 0,
-    })
+    await logUsage(req.user.id, usage)
 
     res.json({ conversationId, content: text })
   } catch (err) {
-    console.error('Gemini regenerate error:', err.message)
+    console.error('AI regenerate error:', err.message)
     res.status(500).json({ error: 'The AI request failed. Please try again.' })
   }
 })
