@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-slate-50 text-slate-800 font-sans antialiased transition-colors duration-300;
+}
+
+.dark body {
+  @apply bg-base-950 text-slate-200;
+}
+
+::selection {
+  background: rgba(124, 77, 255, 0.4);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(124, 77, 255, 0.4);
+  border-radius: 999px;
+}
+
+.glass {
+  @apply bg-white/70 backdrop-blur-xl border border-slate-200;
+}
+
+.dark .glass {
+  @apply bg-white/[0.04] border-white/10;
+}
+
+.text-gradient {
+  @apply bg-clip-text text-transparent bg-hero-gradient;
+}
+
+.container-page {
+  @apply mx-auto w-full max-w-7xl px-5 sm:px-8 lg:px-10;
+}
+
+.section {
+  @apply py-20 sm:py-28;
+}
+
+.card-hover {
+  @apply transition-all duration-300 hover:-translate-y-1 hover:shadow-glow hover:border-brand-500/40;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 0.2; }
+  50% { opacity: 1; }
+}
+.typing-dot {
+  animation: blink 1.4s infinite both;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+.prose-aivora :where(h2, h3) {
+  @apply font-display font-semibold mt-10 mb-4 text-slate-900;
+}
+.dark .prose-aivora :where(h2, h3) {
+  @apply text-slate-100;
+}
+.prose-aivora p {
+  @apply mb-5 leading-relaxed text-slate-600;
+}
+.dark .prose-aivora p {
+  @apply text-slate-300;
+}
