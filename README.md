@@ -2,6 +2,8 @@
 
 AI that works at the speed of your ideas — a multi-page AI SaaS marketing site + authenticated dashboard, built with React, React Router, and Tailwind CSS.
 
+There's also a native mobile app (iOS/Android) in [`mobile/`](mobile/README.md) that talks to this same backend — same account, same conversations, same everything.
+
 ## Getting started
 
 ```bash
