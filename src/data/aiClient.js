@@ -1,26 +1,28 @@
-// Calls the local Aivora API server (server/index.js), which proxies to Claude
-// and keeps the API key server-side. See README for setup.
-export async function sendChatMessage(history) {
-  const res = await fetch('/api/chat', {
+// Calls the local Aivora API server (server/index.js), which proxies to
+// Gemini and keeps the API key server-side. Conversations are persisted
+// server-side — the client only sends the new message, not full history.
+async function postChat(path, body) {
+  const res = await fetch(`/api${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({
-      messages: history.map((m) => ({
-        role: m.role,
-        content: m.content,
-        // Only send media inline data for the message that actually has it —
-        // keeps the payload light and avoids re-uploading old images/videos.
-        ...(m.media ? { media: { mimeType: m.media.mimeType, base64: m.media.base64 } } : {}),
-      })),
-    }),
+    body: JSON.stringify(body),
   })
-
   const data = await res.json().catch(() => ({}))
-
   if (!res.ok) {
     throw new Error(data.error || 'The AI request failed.')
   }
+  return data // { conversationId, content }
+}
 
-  return data.content
+export function sendChatMessage({ conversationId, message, media }) {
+  return postChat('/chat', {
+    conversationId,
+    message,
+    media: media ? { mimeType: media.mimeType, base64: media.base64 } : undefined,
+  })
+}
+
+export function regenerateLastMessage(conversationId) {
+  return postChat('/chat/regenerate', { conversationId })
 }

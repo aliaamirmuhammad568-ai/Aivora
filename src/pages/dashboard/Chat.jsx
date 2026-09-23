@@ -1,37 +1,87 @@
 import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import ChatMessage from '../../components/chat/ChatMessage.jsx'
 import ChatInput from '../../components/chat/ChatInput.jsx'
 import TypingIndicator from '../../components/chat/TypingIndicator.jsx'
-import { conversations as mockConversations } from '../../data/dashboard.js'
-import { sendChatMessage } from '../../data/aiClient.js'
+import LoadingSpinner from '../../components/ui/LoadingSpinner.jsx'
+import { sendChatMessage, regenerateLastMessage } from '../../data/aiClient.js'
+import { listConversations, getConversationMessages } from '../../data/conversationsClient.js'
+import { useToast } from '../../context/ToastContext.jsx'
 
-const initialMessages = [
-  { id: 1, role: 'assistant', content: "Hi! I'm Aivora. Ask me anything — I can help with writing, code, analysis, and more." },
-]
+const introMessage = { id: 'intro', role: 'assistant', content: "Hi! I'm Aivora. Ask me anything — I can help with writing, code, analysis, and more." }
 
 export default function Chat() {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [activeId, setActiveId] = useState(mockConversations[0].id)
-  const [messages, setMessages] = useState(initialMessages)
+  const [conversations, setConversations] = useState([])
+  const [conversationsLoading, setConversationsLoading] = useState(true)
+  const [activeId, setActiveId] = useState(searchParams.get('c') || null)
+  const [messages, setMessages] = useState([introMessage])
+  const [messagesLoading, setMessagesLoading] = useState(false)
   const [typing, setTyping] = useState(false)
   const bottomRef = useRef(null)
+  const toast = useToast()
+
+  const refreshConversations = () => listConversations().then(setConversations).catch(() => {})
+
+  useEffect(() => {
+    refreshConversations().finally(() => setConversationsLoading(false))
+  }, [])
+
+  useEffect(() => {
+    if (!activeId) {
+      setMessages([introMessage])
+      return
+    }
+    setMessagesLoading(true)
+    getConversationMessages(activeId)
+      .then((loaded) =>
+        loaded.map((m) => ({
+          ...m,
+          media: m.media
+            ? {
+                ...m.media,
+                dataUrl: `data:${m.media.mimeType};base64,${m.media.base64}`,
+                kind: m.media.mimeType.startsWith('video/') ? 'video' : 'image',
+              }
+            : null,
+        })),
+      )
+      .then(setMessages)
+      .catch((err) => toast.error(err.message))
+      .finally(() => setMessagesLoading(false))
+  }, [activeId])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, typing])
 
-  const requestReply = async (history) => {
+  const selectConversation = (id) => {
+    setActiveId(id)
+    setSearchParams(id ? { c: id } : {})
+    setSidebarOpen(false)
+  }
+
+  const handleSend = async (text, media) => {
+    if (!text && !media) return
+    const userMsg = { id: `local-${Date.now()}`, role: 'user', content: text, media }
+    setMessages((m) => [...m, userMsg])
     setTyping(true)
     try {
-      const content = await sendChatMessage(history)
-      setMessages((m) => [...m, { id: Date.now() + 1, role: 'assistant', content }])
+      const { conversationId, content } = await sendChatMessage({ conversationId: activeId, message: text, media })
+      setMessages((m) => [...m, { id: `local-${Date.now()}-r`, role: 'assistant', content }])
+      if (!activeId) {
+        setActiveId(conversationId)
+        setSearchParams({ c: conversationId })
+      }
+      refreshConversations()
     } catch (err) {
       setMessages((m) => [
         ...m,
         {
-          id: Date.now() + 1,
+          id: `local-${Date.now()}-e`,
           role: 'assistant',
-          content: `⚠️ ${err.message}\n\nMake sure the API server is running (\`npm run server\`) and \`ANTHROPIC_API_KEY\` is set in your \`.env\` file.`,
+          content: `⚠️ ${err.message}`,
         },
       ])
     } finally {
@@ -39,31 +89,53 @@ export default function Chat() {
     }
   }
 
-  const handleSend = (text, media) => {
-    if (!text && !media) return
-    const userMsg = {
-      id: Date.now(),
-      role: 'user',
-      content: text || (media?.kind === 'image' ? 'Describe this image.' : 'Describe this video.'),
-      media,
+  const handleRegenerate = async () => {
+    if (!activeId) return
+    setTyping(true)
+    setMessages((m) => m.slice(0, -1))
+    try {
+      const { content } = await regenerateLastMessage(activeId)
+      setMessages((m) => [...m, { id: `local-${Date.now()}-r`, role: 'assistant', content }])
+    } catch (err) {
+      toast.error(err.message)
+    } finally {
+      setTyping(false)
     }
-    const nextHistory = [...messages, userMsg]
-    setMessages(nextHistory)
-    requestReply(nextHistory)
-  }
-
-  const handleRegenerate = () => {
-    const withoutLast = messages.slice(0, -1)
-    setMessages(withoutLast)
-    requestReply(withoutLast)
   }
 
   const handleNewChat = () => {
-    setMessages(initialMessages)
+    setActiveId(null)
+    setSearchParams({})
+    setMessages([introMessage])
     setSidebarOpen(false)
   }
 
   const lastAssistantId = [...messages].reverse().find((m) => m.role === 'assistant')?.id
+
+  const conversationList = (onSelect) => (
+    <>
+      {conversationsLoading ? (
+        <div className="flex justify-center py-6">
+          <LoadingSpinner size={20} />
+        </div>
+      ) : conversations.length === 0 ? (
+        <p className="text-xs text-slate-400 px-3 py-4 text-center">No conversations yet — send a message to start one.</p>
+      ) : (
+        conversations.map((c) => (
+          <button
+            key={c.id}
+            onClick={() => onSelect(c.id)}
+            className={`w-full text-left px-3 py-2.5 rounded-xl transition-colors ${
+              String(activeId) === String(c.id) ? 'bg-brand-500/10 text-brand-600 dark:text-brand-300' : 'hover:bg-slate-500/10 text-slate-600 dark:text-slate-300'
+            }`}
+          >
+            <p className="text-sm font-medium truncate">{c.title}</p>
+            <p className="text-xs text-slate-400 truncate mt-0.5">{c.preview}</p>
+          </button>
+        ))
+      )}
+    </>
+  )
 
   return (
     <div className="h-full flex">
@@ -80,20 +152,7 @@ export default function Chat() {
             New chat
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-2 pb-4 space-y-1">
-          {mockConversations.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => setActiveId(c.id)}
-              className={`w-full text-left px-3 py-2.5 rounded-xl transition-colors ${
-                activeId === c.id ? 'bg-brand-500/10 text-brand-600 dark:text-brand-300' : 'hover:bg-slate-500/10 text-slate-600 dark:text-slate-300'
-              }`}
-            >
-              <p className="text-sm font-medium truncate">{c.title}</p>
-              <p className="text-xs text-slate-400 truncate mt-0.5">{c.preview}</p>
-            </button>
-          ))}
-        </div>
+        <div className="flex-1 overflow-y-auto px-2 pb-4 space-y-1">{conversationList(selectConversation)}</div>
       </div>
 
       {/* Chat area */}
@@ -110,20 +169,26 @@ export default function Chat() {
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 space-y-6">
-          {messages.map((m) => (
-            <ChatMessage
-              key={m.id}
-              role={m.role}
-              content={m.content}
-              media={m.media}
-              isLast={m.role === 'assistant' && m.id === lastAssistantId}
-              onRegenerate={handleRegenerate}
-            />
-          ))}
-          {typing && <TypingIndicator />}
-          <div ref={bottomRef} />
-        </div>
+        {messagesLoading ? (
+          <div className="flex-1 flex items-center justify-center">
+            <LoadingSpinner size={28} />
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 space-y-6">
+            {messages.map((m) => (
+              <ChatMessage
+                key={m.id}
+                role={m.role}
+                content={m.content}
+                media={m.media}
+                isLast={m.role === 'assistant' && m.id === lastAssistantId}
+                onRegenerate={activeId ? handleRegenerate : undefined}
+              />
+            ))}
+            {typing && <TypingIndicator />}
+            <div ref={bottomRef} />
+          </div>
+        )}
 
         <ChatInput onSend={handleSend} disabled={typing} />
       </div>
@@ -139,20 +204,7 @@ export default function Chat() {
                 ×
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto px-2 py-3 space-y-1">
-              {mockConversations.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => {
-                    setActiveId(c.id)
-                    setSidebarOpen(false)
-                  }}
-                  className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-slate-500/10"
-                >
-                  <p className="text-sm font-medium truncate text-slate-700 dark:text-slate-200">{c.title}</p>
-                </button>
-              ))}
-            </div>
+            <div className="flex-1 overflow-y-auto px-2 py-3 space-y-1">{conversationList(selectConversation)}</div>
           </div>
         </div>
       )}

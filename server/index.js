@@ -4,11 +4,9 @@ import { fileURLToPath } from 'url'
 import express from 'express'
 import cors from 'cors'
 import session from 'express-session'
-import { GoogleGenerativeAI } from '@google/generative-ai'
 import passport from './passport.js'
 import authRoutes from './authRoutes.js'
-import { logUsage, getUsageStats } from './usageStore.js'
-import { dbEnabled } from './userStore.js'
+import apiRoutes from './apiRoutes.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -36,86 +34,7 @@ app.use(
 app.use(passport.initialize())
 app.use(passport.session())
 app.use('/api/auth', authRoutes)
-
-const apiKey = process.env.GEMINI_API_KEY
-const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null
-
-const SYSTEM_PROMPT =
-  'You are Aivora, a helpful, concise AI assistant embedded in the Aivora SaaS platform. ' +
-  'Format responses with markdown (headings, bold, lists, code fences) when useful.'
-
-app.get('/api/health', (req, res) => {
-  res.json({ ok: true, configured: Boolean(apiKey) })
-})
-
-app.post('/api/chat', async (req, res) => {
-  if (!genAI) {
-    return res.status(503).json({
-      error: 'GEMINI_API_KEY is not configured on the server. Add it to a .env file and restart the server.',
-    })
-  }
-  if (!req.isAuthenticated?.() || !req.user) {
-    return res.status(401).json({ error: 'You must be logged in to chat.' })
-  }
-
-  const { messages } = req.body
-  if (!Array.isArray(messages) || messages.length === 0) {
-    return res.status(400).json({ error: 'messages array is required' })
-  }
-
-  try {
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-3.6-flash',
-      systemInstruction: SYSTEM_PROMPT,
-    })
-
-    // Gemini requires the history to start with a 'user' turn and strictly
-    // alternate; drop any leading assistant messages (e.g. our fixed intro).
-    const trimmed = [...messages]
-    while (trimmed.length && trimmed[0].role !== 'user') trimmed.shift()
-
-    const history = trimmed.slice(0, -1).map((m) => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }],
-    }))
-    const last = trimmed[trimmed.length - 1]
-
-    // Build the current turn as multimodal parts if an image/video was attached.
-    const lastParts = [{ text: last?.content || '' }]
-    if (last?.media?.base64 && last?.media?.mimeType) {
-      lastParts.push({ inlineData: { mimeType: last.media.mimeType, data: last.media.base64 } })
-    }
-
-    const chat = model.startChat({ history })
-    const result = await chat.sendMessage(lastParts)
-    const text = result.response.text()
-    const usage = result.response.usageMetadata || {}
-
-    if (dbEnabled) {
-      await logUsage(req.user.id, {
-        promptTokens: usage.promptTokenCount || 0,
-        completionTokens: usage.candidatesTokenCount || 0,
-        totalTokens: usage.totalTokenCount || 0,
-      })
-    }
-
-    res.json({ content: text })
-  } catch (err) {
-    console.error('Gemini API error:', err.message)
-    res.status(500).json({ error: 'The AI request failed. Please try again.' })
-  }
-})
-
-app.get('/api/usage', async (req, res) => {
-  if (!req.isAuthenticated?.() || !req.user) {
-    return res.status(401).json({ error: 'You must be logged in.' })
-  }
-  if (!dbEnabled) {
-    return res.status(503).json({ error: 'The database is not configured on the server yet.' })
-  }
-  const stats = await getUsageStats(req.user.id)
-  res.json(stats)
-})
+app.use('/api', apiRoutes)
 
 // Serve the built frontend (dist/) from this same server, so one deployed
 // service handles both the site and the API. In local dev, `dist` won't
@@ -131,7 +50,7 @@ app.get(/^(?!\/api).*/, (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Aivora server running on http://localhost:${PORT}`)
-  if (!apiKey) {
+  if (!process.env.GEMINI_API_KEY) {
     console.warn('⚠️  GEMINI_API_KEY not set — chat will return an error until you add one to .env')
   }
 })

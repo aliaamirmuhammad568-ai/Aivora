@@ -1,15 +1,30 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Card from '../../components/ui/Card.jsx'
 import Modal from '../../components/ui/Modal.jsx'
 import Button from '../../components/ui/Button.jsx'
 import Input from '../../components/ui/Input.jsx'
 import EmptyState from '../../components/ui/EmptyState.jsx'
-import { conversations as initialConversations } from '../../data/dashboard.js'
+import LoadingSpinner from '../../components/ui/LoadingSpinner.jsx'
+import { listConversations, renameConversation, deleteConversation } from '../../data/conversationsClient.js'
 import { useToast } from '../../context/ToastContext.jsx'
 
+function formatDate(iso) {
+  const d = new Date(iso)
+  const now = new Date()
+  const isToday = d.toDateString() === now.toDateString()
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  const isYesterday = d.toDateString() === yesterday.toDateString()
+
+  if (isToday) return `Today, ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+  if (isYesterday) return 'Yesterday'
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+}
+
 export default function History() {
-  const [conversations, setConversations] = useState(initialConversations)
+  const [conversations, setConversations] = useState([])
+  const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('recent')
   const [renaming, setRenaming] = useState(null)
@@ -18,23 +33,49 @@ export default function History() {
   const toast = useToast()
   const navigate = useNavigate()
 
+  const load = () => listConversations().then(setConversations).catch((err) => toast.error(err.message))
+
+  useEffect(() => {
+    load().finally(() => setLoading(false))
+  }, [])
+
   const filtered = useMemo(() => {
     let list = conversations.filter((c) => c.title.toLowerCase().includes(query.toLowerCase()))
-    if (sort === 'messages') list = [...list].sort((a, b) => b.messages - a.messages)
+    if (sort === 'messages') list = [...list].sort((a, b) => b.messageCount - a.messageCount)
     if (sort === 'az') list = [...list].sort((a, b) => a.title.localeCompare(b.title))
     return list
   }, [conversations, query, sort])
 
-  const confirmDelete = () => {
-    setConversations((cs) => cs.filter((c) => c.id !== deleting.id))
-    toast.success(`Deleted "${deleting.title}"`)
-    setDeleting(null)
+  const confirmDelete = async () => {
+    try {
+      await deleteConversation(deleting.id)
+      setConversations((cs) => cs.filter((c) => c.id !== deleting.id))
+      toast.success(`Deleted "${deleting.title}"`)
+    } catch (err) {
+      toast.error(err.message)
+    } finally {
+      setDeleting(null)
+    }
   }
 
-  const confirmRename = () => {
-    setConversations((cs) => cs.map((c) => (c.id === renaming.id ? { ...c, title: renameValue } : c)))
-    toast.success('Conversation renamed')
-    setRenaming(null)
+  const confirmRename = async () => {
+    try {
+      await renameConversation(renaming.id, renameValue)
+      setConversations((cs) => cs.map((c) => (c.id === renaming.id ? { ...c, title: renameValue } : c)))
+      toast.success('Conversation renamed')
+    } catch (err) {
+      toast.error(err.message)
+    } finally {
+      setRenaming(null)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <LoadingSpinner size={28} />
+      </div>
+    )
   }
 
   return (
@@ -76,19 +117,19 @@ export default function History() {
       {filtered.length === 0 ? (
         <EmptyState
           icon={<span className="text-2xl">🕘</span>}
-          title="No conversations found"
-          description="Try a different search term, or start a new conversation."
+          title={conversations.length === 0 ? 'No conversations yet' : 'No conversations found'}
+          description={conversations.length === 0 ? 'Start chatting and your conversations will show up here.' : 'Try a different search term.'}
           action={<Button to="/dashboard/chat">Start a new chat</Button>}
         />
       ) : (
         <div className="space-y-3">
           {filtered.map((c) => (
             <Card key={c.id} hover={false} className="flex items-center justify-between gap-4">
-              <button onClick={() => navigate('/dashboard/chat')} className="text-left min-w-0 flex-1">
+              <button onClick={() => navigate(`/dashboard/chat?c=${c.id}`)} className="text-left min-w-0 flex-1">
                 <p className="font-medium text-slate-800 dark:text-white truncate">{c.title}</p>
                 <p className="text-sm text-slate-500 dark:text-slate-400 truncate mt-0.5">{c.preview}</p>
                 <p className="text-xs text-slate-400 mt-1.5">
-                  {c.date} &middot; {c.messages} messages
+                  {formatDate(c.updatedAt)} &middot; {c.messageCount} messages
                 </p>
               </button>
               <div className="flex items-center gap-1 shrink-0">

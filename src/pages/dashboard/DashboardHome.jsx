@@ -4,9 +4,11 @@ import Card from '../../components/ui/Card.jsx'
 import Button from '../../components/ui/Button.jsx'
 import Badge from '../../components/ui/Badge.jsx'
 import LoadingSpinner from '../../components/ui/LoadingSpinner.jsx'
-import { conversations, files, recentActivity } from '../../data/dashboard.js'
 import { useAuth } from '../../context/AuthContext.jsx'
 import { fetchUsage } from '../../data/usageClient.js'
+import { listConversations } from '../../data/conversationsClient.js'
+import { listFiles } from '../../data/filesClient.js'
+import { fetchActivity } from '../../data/activityClient.js'
 
 const quickActions = [
   { icon: '💬', label: 'New chat', to: '/dashboard/chat' },
@@ -15,18 +17,52 @@ const quickActions = [
   { icon: '⚙️', label: 'Settings', to: '/dashboard/settings' },
 ]
 
+function timeAgo(iso) {
+  const diffMs = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diffMs / 60000)
+  if (mins < 1) return 'Just now'
+  if (mins < 60) return `${mins} min${mins === 1 ? '' : 's'} ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`
+  const days = Math.floor(hours / 24)
+  if (days === 1) return 'Yesterday'
+  return `${days} days ago`
+}
+
+function fileIcon(mimeType) {
+  if (mimeType?.startsWith('image/')) return '🖼️'
+  if (mimeType?.startsWith('video/')) return '🎞️'
+  return '📄'
+}
+
 export default function DashboardHome() {
   const { user } = useAuth()
   const firstName = user?.name?.split(' ')[0] || 'there'
 
   const [usage, setUsage] = useState(null)
   const [usageLoading, setUsageLoading] = useState(true)
+  const [conversations, setConversations] = useState([])
+  const [files, setFiles] = useState([])
+  const [activity, setActivity] = useState([])
+  const [sideLoading, setSideLoading] = useState(true)
 
   useEffect(() => {
     fetchUsage()
       .then(setUsage)
       .catch(() => setUsage(null))
       .finally(() => setUsageLoading(false))
+
+    Promise.all([
+      listConversations().catch(() => []),
+      listFiles().catch(() => []),
+      fetchActivity().catch(() => []),
+    ])
+      .then(([c, f, a]) => {
+        setConversations(c)
+        setFiles(f)
+        setActivity(a)
+      })
+      .finally(() => setSideLoading(false))
   }, [])
 
   const maxUsage = Math.max(1, ...(usage?.monthly.map((u) => u.value) || [1]))
@@ -104,27 +140,37 @@ export default function DashboardHome() {
           )}
         </Card>
 
-        {/* Recent activity */}
+        {/* Recent activity — real */}
         <Card className="lg:col-span-2">
           <h3 className="font-display font-semibold text-slate-900 dark:text-white mb-5">Recent activity</h3>
-          <ul className="space-y-4">
-            {recentActivity.map((a) => (
-              <li key={a.id} className="flex items-start gap-3">
-                <span className="w-8 h-8 rounded-lg bg-brand-500/10 text-brand-500 flex items-center justify-center text-sm shrink-0">
-                  {a.type === 'chat' ? '💬' : a.type === 'file' ? '📁' : '⚙️'}
-                </span>
-                <div>
-                  <p className="text-sm text-slate-700 dark:text-slate-200 leading-snug">{a.label}</p>
-                  <p className="text-xs text-slate-400 mt-0.5">{a.time}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
+          {sideLoading ? (
+            <div className="flex justify-center py-6">
+              <LoadingSpinner size={20} />
+            </div>
+          ) : activity.length === 0 ? (
+            <p className="text-sm text-slate-500 dark:text-slate-400 py-6 text-center">
+              No activity yet — start a chat or upload a file.
+            </p>
+          ) : (
+            <ul className="space-y-4">
+              {activity.map((a) => (
+                <li key={a.id} className="flex items-start gap-3">
+                  <span className="w-8 h-8 rounded-lg bg-brand-500/10 text-brand-500 flex items-center justify-center text-sm shrink-0">
+                    {a.type === 'chat' ? '💬' : a.type === 'file' ? '📁' : '⚙️'}
+                  </span>
+                  <div>
+                    <p className="text-sm text-slate-700 dark:text-slate-200 leading-snug">{a.label}</p>
+                    <p className="text-xs text-slate-400 mt-0.5">{timeAgo(a.createdAt)}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </Card>
       </div>
 
       <div className="grid lg:grid-cols-2 gap-6">
-        {/* Recent conversations */}
+        {/* Recent conversations — real */}
         <Card>
           <div className="flex items-center justify-between mb-5">
             <h3 className="font-display font-semibold text-slate-900 dark:text-white">Recent conversations</h3>
@@ -132,22 +178,30 @@ export default function DashboardHome() {
               View all
             </Link>
           </div>
-          <ul className="space-y-1">
-            {conversations.slice(0, 4).map((c) => (
-              <li key={c.id}>
-                <Link to="/dashboard/chat" className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-500/10 transition-colors">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">{c.title}</p>
-                    <p className="text-xs text-slate-400 truncate">{c.preview}</p>
-                  </div>
-                  <span className="text-xs text-slate-400 shrink-0">{c.date}</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
+          {sideLoading ? (
+            <div className="flex justify-center py-6">
+              <LoadingSpinner size={20} />
+            </div>
+          ) : conversations.length === 0 ? (
+            <p className="text-sm text-slate-500 dark:text-slate-400 py-6 text-center">No conversations yet.</p>
+          ) : (
+            <ul className="space-y-1">
+              {conversations.slice(0, 4).map((c) => (
+                <li key={c.id}>
+                  <Link to={`/dashboard/chat?c=${c.id}`} className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-500/10 transition-colors">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">{c.title}</p>
+                      <p className="text-xs text-slate-400 truncate">{c.preview}</p>
+                    </div>
+                    <span className="text-xs text-slate-400 shrink-0">{timeAgo(c.updatedAt)}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
         </Card>
 
-        {/* Recent files */}
+        {/* Recent files — real */}
         <Card>
           <div className="flex items-center justify-between mb-5">
             <h3 className="font-display font-semibold text-slate-900 dark:text-white">Recent files</h3>
@@ -155,21 +209,27 @@ export default function DashboardHome() {
               View all
             </Link>
           </div>
-          <ul className="space-y-1">
-            {files.slice(0, 4).map((f) => (
-              <li key={f.id}>
-                <Link to="/dashboard/files" className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-500/10 transition-colors">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="text-lg shrink-0">
-                      {f.type === 'pdf' ? '📕' : f.type === 'csv' ? '📊' : f.type === 'doc' ? '📄' : f.type === 'sheet' ? '📈' : '🖼️'}
-                    </span>
-                    <p className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">{f.name}</p>
-                  </div>
-                  <span className="text-xs text-slate-400 shrink-0">{f.size}</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
+          {sideLoading ? (
+            <div className="flex justify-center py-6">
+              <LoadingSpinner size={20} />
+            </div>
+          ) : files.length === 0 ? (
+            <p className="text-sm text-slate-500 dark:text-slate-400 py-6 text-center">No files yet.</p>
+          ) : (
+            <ul className="space-y-1">
+              {files.slice(0, 4).map((f) => (
+                <li key={f.id}>
+                  <Link to="/dashboard/files" className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-500/10 transition-colors">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="text-lg shrink-0">{fileIcon(f.mimeType)}</span>
+                      <p className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">{f.name}</p>
+                    </div>
+                    <span className="text-xs text-slate-400 shrink-0">{timeAgo(f.createdAt)}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
         </Card>
       </div>
 
