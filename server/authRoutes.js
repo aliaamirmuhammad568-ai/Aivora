@@ -69,7 +69,7 @@ router.post('/signup', requireDb, async (req, res) => {
 })
 
 router.post('/login', requireDb, async (req, res) => {
-  const { email, password } = req.body || {}
+  const { email, password, remember } = req.body || {}
 
   if (!email?.trim() || !password) {
     return res.status(400).json({ error: 'Email and password are required.' })
@@ -87,6 +87,15 @@ router.post('/login', requireDb, async (req, res) => {
 
   req.login(user, (err) => {
     if (err) return res.status(500).json({ error: 'Sign-in failed. Please try again.' })
+
+    if (remember) {
+      // "Remember me": keep the session for 30 days.
+      req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000
+    } else {
+      // Unchecked: session cookie, expires when the browser is closed.
+      req.session.cookie.expires = false
+    }
+
     res.json({ user: toPublicUser(user) })
   })
 })

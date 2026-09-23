@@ -35,7 +35,7 @@ export default function Login() {
     if (!validate()) return
     setLoading(true)
     try {
-      await login({ email: form.email, password: form.password })
+      await login({ email: form.email, password: form.password, remember })
       await refresh()
       toast.success('Welcome back!')
       navigate(redirectTo)

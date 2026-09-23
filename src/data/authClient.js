@@ -16,8 +16,8 @@ export function signup({ name, email, password }) {
   return postAuth('signup', { name, email, password })
 }
 
-export function login({ email, password }) {
-  return postAuth('login', { email, password })
+export function login({ email, password, remember }) {
+  return postAuth('login', { email, password, remember })
 }
 
 export async function forgotPassword({ email }) {
